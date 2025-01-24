@@ -16,12 +16,17 @@ let projectPackage = JSON.parse(packageJson);
 export const REQUIRED_AUTOJS6_VERSION_NAME = projectPackage['requiredClientVersionName'];
 export const REQUIRED_AUTOJS6_VERSION_CODE = parseInt(projectPackage['requiredClientVersionCode']) || -1;
 
+// 服务端头大小
 const SERVER_HEADER_SIZE = 16;
+// 客户端头大小
 const CLIENT_HEADER_SIZE = 8;
 
+/** json 数据类型 */
 const TYPE_JSON = 1;
+/** byte 数据类型 */
 const TYPE_BYTES = 2;
 
+// 监听端口情况
 const LISTENING_PORT = 6347;
 const CLIENT_PORT = 7347;
 const CLIENT_ADB_SERVER_PORT = 20347;
@@ -43,22 +48,31 @@ export class Device extends events.EventEmitter {
     host: string = null;
     isNormallyClosed: boolean = false;
 
+    /** 客户端接口 */
     static defaultClientPort: number = CLIENT_PORT;
+    /** 服务端接口 */
     static defaultAdbServerPort: number = CLIENT_ADB_SERVER_PORT;
 
     constructor(connection: Socket) {
         super();
 
+        /** 获取连接 */
         this.connection = connection;
+        /** 读取连接 */
         this.read(connection);
 
+        /** 解码 hello 数据，握手校验 */
         this.on('data:hello', (data: HelloData) => {
             logDebug('on server hello: ', data);
 
             this.isAttached = true;
             this.name = data.device_name || 'unknown device';
+
+            /** 拿到 app 版本 */
             this.version = data.app_version;
             this.versionCode = parseInt(data.app_version_code);
+
+            /** 最低版本校验 */
             if (this.versionCode < REQUIRED_AUTOJS6_VERSION_CODE) {
                 let releasesUrl = 'https://github.com/SuperMonster003/AutoJs6/releases/';
                 const errMessage = `无法建立连接, 请确认 AutoJs6 版本不低于 ${REQUIRED_AUTOJS6_VERSION_NAME}`;
@@ -69,9 +83,14 @@ export class Device extends events.EventEmitter {
                 this.connection = null;
                 return;
             }
+
+            /** 获取设备 id */
             this.deviceId = data.device_id;
 
+            /** 发送握手消息 */
             this.sendHello();
+
+            // attach
             this.emit('attach', this);
         });
 
@@ -92,14 +111,20 @@ export class Device extends events.EventEmitter {
     sendJson(data: object) {
         logDebug('## [m] Device.sendUTF8');
 
+        // TODO 特定 string buffer？为什么要互转
         let bytes: Buffer = Buffer.from(JSON.stringify(data), 'utf-8');
         let string = buffToString(bytes);
 
+        /** 创建一个指定大小的 buffer */
         let headerBuffer = Buffer.allocUnsafe(SERVER_HEADER_SIZE);
+        /** 写入数据长度，后面是起始位置 */
         headerBuffer.write(String(string.length), 0);
+        /** 写入数据类型，后面是起始位置 */
         headerBuffer.write(String(TYPE_JSON), SERVER_HEADER_SIZE - 2);
 
+        // 写入 buffer
         this.connection.write(headerBuffer);
+        // 写入字符串
         this.connection.write(string);
         // this.connection.write('\r\n');
 
@@ -111,6 +136,7 @@ export class Device extends events.EventEmitter {
     sendBytes(bytes: Buffer) {
         logDebug('## [m] Device.sendBytes');
 
+        // TODO 为什么是 latin1 编码
         let string = bytes.toString('latin1');
 
         let headerBuffer = Buffer.allocUnsafe(SERVER_HEADER_SIZE);
@@ -127,6 +153,7 @@ export class Device extends events.EventEmitter {
         logDebug('## Written bytes string length: ' + string.length);
     }
 
+    /** 发送握手消息 */
     sendHello(err?: string) {
         logDebug('## [m] Device.sendHello');
 
@@ -135,10 +162,17 @@ export class Device extends events.EventEmitter {
         if (err) {
             data['errorMessage'] = err;
         }
+        
+        // {
+        //     id: id,
+        //     type: "hello",
+        //     data
+        // }
         this.sendJson({ id: id, type: 'hello', data: data });
         return id;
     }
 
+    /** 发送指令 */
     sendCommand(command, data = {}) {
         logDebug('## [m] Device.sendCommand');
 
@@ -147,6 +181,7 @@ export class Device extends events.EventEmitter {
         return id;
     }
 
+    /** 断开连接 */
     disconnect() {
         this.connection.destroy();
         this.isNormallyClosed = true;
@@ -154,6 +189,7 @@ export class Device extends events.EventEmitter {
 
     connectionToString() {
         let remoteAddress = this.connection.remoteAddress?.replace(/.*?:?((\d+\.){3}\d+$)/, '$1') || 'Unknown';
+        // 本地的话，加个端口号
         return remoteAddress == '127.0.0.1' ? `${remoteAddress}:${this.connection.remotePort}` : remoteAddress;
     }
 
@@ -168,7 +204,9 @@ export class Device extends events.EventEmitter {
             jointData: <Buffer>Buffer.allocUnsafe(0),
             parsedDataType: DEFAULT_DATA_TYPE,
             onData(chunk: Buffer, parser: (dataType: number, data: Buffer) => void) {
+                // 监听数据
                 let offset = 0;
+                // chunk 长度
                 let expectedChunkLen = ( /* @IIFE */ () => {
                     if (this.isLastDataComplete) {
                         this.parseHeader(chunk);
@@ -178,16 +216,21 @@ export class Device extends events.EventEmitter {
                     return this.parsedDataLength - this.getJointDataLength();
                 })();
 
+                // 拼接数据
                 this.joinData(chunk.slice(offset, expectedChunkLen));
 
+                // 数据超长
                 if (chunk.length >= expectedChunkLen) {
                     this.isLastDataComplete = true;
                     this.parseFullData(parser);
                     this.reset();
 
                     if (chunk.length > expectedChunkLen) {
+                        // 剩余长度
                         let remaining = chunk.slice(expectedChunkLen);
                         logDebug(`remaining len: ${remaining.length}`);
+
+                        // 剩余数据继续递归
                         this.onData(remaining, parser);
                     }
                 } else {
@@ -199,18 +242,22 @@ export class Device extends events.EventEmitter {
             },
             joinData(data: Buffer): void {
                 logDebug(`length of data to be joint: ${data.length}`);
+                // buffer 拼接
                 this.jointData = Buffer.concat([ this.jointData, data ]);
             },
             parseHeader(chunk: Buffer) {
+                // 解数据头
                 this.parsedDataLength = chunk.readInt32BE(0);
                 this.parsedDataType = chunk.readInt32BE(4);
                 logDebug(`dataLength: ${this.parsedDataLength}, dataType: ${this.parsedDataType}`);
             },
             parseFullData(parser: (dataType: number, data: Buffer) => void) {
                 logDebug(`parsing full data... (len: ${this.jointData.length})`);
+                // 对数据进行解析
                 parser(this.parsedDataType, this.jointData);
             },
             reset() {
+                // 重置数据对象
                 this.jointData = <Buffer>Buffer.allocUnsafe(0);
                 this.parsedDataLength = DEFAULT_DATA_LENGTH;
                 this.parsedDataType = DEFAULT_DATA_TYPE;
@@ -220,6 +267,7 @@ export class Device extends events.EventEmitter {
         socket
             .on('data', (chunk: Buffer) => {
                 logDebug('on data');
+                // 监听数据
                 _.onData(chunk, this.onData.bind(this));
             })
             .on('message', (message) => {

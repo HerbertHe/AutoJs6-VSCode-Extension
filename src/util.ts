@@ -5,11 +5,14 @@ import * as si from 'systeminformation';
 import { StringDecoder } from 'string_decoder';
 import { logDebug } from './extension';
 
+/** 收集基本网络信息 */
 export function getBasicNetworkInterfaces(): NIDetails[] {
     const interfaces = os.networkInterfaces();
+    // 收集网卡信息 名称、IPv4、MAC
     const result: NIDetails[] = [];
 
     for (const [ iface, infos ] of Object.entries(interfaces)) {
+        // 忽略虚拟机网卡
         if (/\b(vmware|vmnet\d*)\b/i.test(iface)) {
             continue;
         }
@@ -34,6 +37,7 @@ export function getBasicNetworkInterfaces(): NIDetails[] {
     return result;
 }
 
+/** 获取详细的网络接口信息 */
 export async function getDetailedNetworkInterfaces(ref: NIDetails[]): Promise<NIDetails[]> {
     try {
         let detailedInfo = await si.networkInterfaces();
